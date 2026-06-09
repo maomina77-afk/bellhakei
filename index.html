@@ -1,235 +1,391 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>釣り鐘アナライザー Pro</title>
-<style>
-body { font-family: sans-serif; padding: 20px; }
-canvas { width: 100%; height: 150px; background: #000; margin-bottom: 10px; }
-#count { font-size: 32px; font-weight: bold; color: #d00; }
-.band-info { font-size: 12px; color: #555; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>釣り鐘解析・自動カウントシステム</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e1e; color: #d4d4d4; margin: 0; padding: 20px; }
+        h1, h2, h3 { color: #569cd6; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; }
+        .panel { background-color: #2d2d2d; border: 1px solid #3e3e42; border-radius: 8px; padding: 15px; flex: 1 1 400px; }
+        button { background-color: #0e639c; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        button:hover { background-color: #1177bb; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        input, select { background-color: #3c3c3c; color: white; border: 1px solid #555; padding: 5px; border-radius: 4px; }
+        canvas { background-color: #000; border: 1px solid #555; width: 100%; height: 150px; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #555; padding: 8px; text-align: left; }
+        th { background-color: #333; }
+        .log-container { max-height: 200px; overflow-y: auto; }
+        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 12px; background-color: #555; font-weight: bold; }
+        .status-active { background-color: #28a745; color: white; }
+    </style>
 </head>
 <body>
 
-<h2>釣り鐘アナライザー Pro</h2>
+<h1>釣り鐘解析・自動カウントシステム</h1>
 
-<button id="startBtn">開始</button>
-<button id="stopBtn">停止</button>
-<button id="calibBtn">キャリブレーション開始</button>
+<div class="container">
+    <!-- オーディオ・解析パネル -->
+    <div class="panel">
+        <h2>波形・スペクトル解析</h2>
+        <button id="btnStartAudio">マイク接続・解析開始</button>
+        <span id="audioStatus" class="status-badge">停止中</span>
+        
+        <h3>学習機能（鐘の音のプロファイル作成）</h3>
+        <p>ノイズのない状態で鐘を鳴らし、「学習開始」を押して数秒録音します。</p>
+        <button id="btnLearnStart">学習開始 (3秒)</button>
+        <button id="btnSaveProfile">学習データをファイル保存</button>
+        <input type="file" id="fileLoadProfile" accept=".json" style="display: none;">
+        <button id="btnLoadProfile" onclick="document.getElementById('fileLoadProfile').click();">ファイルから読込</button>
+        <div id="learningResult" style="font-size: 0.9em; margin-top: 5px; color: #ce9178;"></div>
 
-<h3>3バンド情報（自動学習）</h3>
-<div class="band-info">
-低域: <span id="bandLow">未学習</span><br>
-中域: <span id="bandMid">未学習</span><br>
-高域: <span id="bandHigh">未学習</span>
+        <h3>ビジュアライザ</h3>
+        <canvas id="waveformCanvas"></canvas>
+        <canvas id="spectrumCanvas"></canvas>
+        <button id="btnSaveImage">波形・スペクトル画像を保存</button>
+    </div>
+
+    <!-- カウント・ログパネル -->
+    <div class="panel">
+        <h2>自動カウント & ログ</h2>
+        <div style="font-size: 2em; text-align: center; margin: 10px 0;">カウント: <span id="bellCount" style="color: #4fc1ff; font-weight: bold;">0</span></div>
+        <button id="btnResetCount">カウント・ログをリセット</button>
+        
+        <div class="log-container">
+            <table id="logTable">
+                <thead><tr><th>#</th><th>検知時刻</th><th>最大強度 (dB)</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- タイマーパネル -->
+    <div class="panel">
+        <h2>鐘つき間隔お知らせタイマー</h2>
+        <div>
+            <label>開始時刻: <input type="time" id="timerStartTime" required></label><br><br>
+            <label>打鐘間隔 (秒): <input type="number" id="timerInterval" value="60" min="1"></label><br><br>
+            <label>事前通知 (秒前): <input type="number" id="timerPreNotice" value="10" min="0"></label><br><br>
+            <label>通知回数上限: <input type="number" id="timerLimit" value="108" min="1"></label>
+        </div>
+        <div style="margin-top: 15px;">
+            <button id="btnStartTimer">タイマー開始</button>
+            <button id="btnStopTimer" disabled>タイマー停止</button>
+            <span id="timerStatus" class="status-badge">待機中</span>
+        </div>
+        <div id="timerMessage" style="margin-top: 10px; color: #dcdcaa;"></div>
+    </div>
 </div>
 
-<h3>リアルタイム情報</h3>
-ピーク周波数: <span id="peakFreq">-</span> Hz<br>
-ピーク音量（平滑後）: <span id="peakVol">-</span><br>
-
-<h3>カウント</h3>
-回数: <span id="count">0</span>
-
-<h3>スペクトル（周波数領域）</h3>
-<canvas id="specCanvas"></canvas>
-
-<h3>波形（Time-domain）</h3>
-<canvas id="waveCanvas"></canvas>
-
 <script>
-let audioCtx, analyser, analyserTime, micStream;
-let freqData, timeData;
-let running = false;
-let lastHitTime = 0;
-let count = 0;
+    // === 状態変数と永続化設定 ===
+    let state = {
+        count: 0,
+        logs: [],
+        learnedPeaks: [],
+        threshold: 150 // 検知閾値 (0-255)
+    };
 
-// 3バンド用
-let bandDefs = {
-    low:  { min: 0,   max: 0 },
-    mid:  { min: 0,   max: 0 },
-    high: { min: 0,   max: 0 }
-};
-let calibrated = false;
+    // ローカルストレージから復元
+    const savedState = localStorage.getItem('bellhakei_state');
+    if (savedState) {
+        state = JSON.parse(savedState);
+        updateLogUI();
+    }
 
-// キャリブレーション用
-let calibMode = false;
-let calibPeaks = [];
+    function saveState() {
+        localStorage.setItem('bellhakei_state', JSON.stringify(state));
+    }
 
-// 移動平均用
-const volHistory = [];
-const VOL_HISTORY_LEN = 5;
+    // === オーディオ解析関連 ===
+    let audioContext, analyser, microphone, dataArray, freqArray;
+    let isAnalyzing = false;
+    let isLearning = false;
+    let isRinging = false;
+    let cooldownTimer = null;
+    let tempPeaks = [];
 
-document.getElementById("startBtn").onclick = async () => {
-    if (running) return;
-    running = true;
+    const waveformCanvas = document.getElementById('waveformCanvas');
+    const spectrumCanvas = document.getElementById('spectrumCanvas');
+    const canvasCtxW = waveformCanvas.getContext('2d');
+    const canvasCtxS = spectrumCanvas.getContext('2d');
 
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 4096;
+    document.getElementById('btnStartAudio').addEventListener('click', async () => {
+        if (isAnalyzing) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 2048; // 高解像度
+            microphone = audioContext.createMediaStreamSource(stream);
+            microphone.connect(analyser);
+            
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+            freqArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            isAnalyzing = true;
+            document.getElementById('audioStatus').textContent = '解析中';
+            document.getElementById('audioStatus').classList.add('status-active');
+            draw();
+            detectLoop();
+        } catch (err) {
+            alert('マイクのアクセスが拒否されたか、エラーが発生しました: ' + err);
+        }
+    });
 
-    analyserTime = audioCtx.createAnalyser();
-    analyserTime.fftSize = 2048;
+    // 描画ループ
+    function draw() {
+        if (!isAnalyzing) return;
+        requestAnimationFrame(draw);
+        
+        // 波形
+        analyser.getByteTimeDomainData(dataArray);
+        canvasCtxW.fillStyle = '#000';
+        canvasCtxW.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+        canvasCtxW.lineWidth = 2;
+        canvasCtxW.strokeStyle = '#4fc1ff';
+        canvasCtxW.beginPath();
+        const sliceWidth = waveformCanvas.width * 1.0 / analyser.frequencyBinCount;
+        let x = 0;
+        for(let i = 0; i < analyser.frequencyBinCount; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = v * waveformCanvas.height / 2;
+            if(i === 0) canvasCtxW.moveTo(x, y);
+            else canvasCtxW.lineTo(x, y);
+            x += sliceWidth;
+        }
+        canvasCtxW.lineTo(waveformCanvas.width, waveformCanvas.height / 2);
+        canvasCtxW.stroke();
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micStream = audioCtx.createMediaStreamSource(stream);
-
-    // ここではフィルタは使わず、3バンド判定をソフト側で行う
-    micStream.connect(analyser);
-    micStream.connect(analyserTime);
-
-    freqData = new Uint8Array(analyser.frequencyBinCount);
-    timeData = new Uint8Array(analyserTime.fftSize);
-
-    draw();
-};
-
-document.getElementById("stopBtn").onclick = () => {
-    running = false;
-    if (audioCtx) audioCtx.close();
-};
-
-document.getElementById("calibBtn").onclick = () => {
-    calibMode = true;
-    calibPeaks = [];
-    calibrated = false;
-    alert("キャリブレーション開始：実際に鐘を数回鳴らしてください。5〜10回程度。");
-};
-
-function draw() {
-    if (!running) return;
-
-    analyser.getByteFrequencyData(freqData);
-    analyserTime.getByteTimeDomainData(timeData);
-
-    const specCanvas = document.getElementById("specCanvas");
-    const specCtx = specCanvas.getContext("2d");
-    const sw = specCanvas.width;
-    const sh = specCanvas.height;
-
-    const waveCanvas = document.getElementById("waveCanvas");
-    const waveCtx = waveCanvas.getContext("2d");
-    const ww = waveCanvas.width;
-    const wh = waveCanvas.height;
-
-    specCtx.clearRect(0, 0, sw, sh);
-    waveCtx.clearRect(0, 0, ww, wh);
-
-    // --- スペクトル描画 & ピーク検出 ---
-    let peakFreq = 0;
-    let peakVol = 0;
-
-    specCtx.fillStyle = "cyan";
-
-    for (let i = 0; i < freqData.length; i++) {
-        const vol = freqData[i];
-        const freq = i * audioCtx.sampleRate / analyser.fftSize;
-
-        const x = (i / freqData.length) * sw;
-        const y = sh - (vol / 255) * sh;
-        specCtx.fillRect(x, y, 1, sh);
-
-        if (vol > peakVol) {
-            peakVol = vol;
-            peakFreq = freq;
+        // スペクトル (周波数)
+        analyser.getByteFrequencyData(freqArray);
+        canvasCtxS.fillStyle = '#000';
+        canvasCtxS.fillRect(0, 0, spectrumCanvas.width, spectrumCanvas.height);
+        const barWidth = (spectrumCanvas.width / analyser.frequencyBinCount) * 2.5;
+        let barHeight;
+        x = 0;
+        for(let i = 0; i < analyser.frequencyBinCount; i++) {
+            barHeight = freqArray[i];
+            canvasCtxS.fillStyle = `rgb(${barHeight + 100}, 50, 50)`;
+            canvasCtxS.fillRect(x, spectrumCanvas.height - barHeight / 2, barWidth, barHeight / 2);
+            x += barWidth + 1;
         }
     }
 
-    // --- 波形描画（Time-domain） ---
-    waveCtx.strokeStyle = "lime";
-    waveCtx.beginPath();
-    for (let i = 0; i < timeData.length; i++) {
-        const v = timeData[i] / 255.0;
-        const x = (i / timeData.length) * ww;
-        const y = wh - v * wh;
-        if (i === 0) waveCtx.moveTo(x, y);
-        else waveCtx.lineTo(x, y);
-    }
-    waveCtx.stroke();
+    // 学習処理
+    document.getElementById('btnLearnStart').addEventListener('click', () => {
+        if (!isAnalyzing) return alert('先にマイク接続を開始してください。');
+        isLearning = true;
+        tempPeaks = new Array(analyser.frequencyBinCount).fill(0);
+        document.getElementById('learningResult').textContent = "鐘を鳴らしてください... 学習中...";
+        
+        let frames = 0;
+        const learnInterval = setInterval(() => {
+            analyser.getByteFrequencyData(freqArray);
+            for(let i = 0; i < freqArray.length; i++) {
+                tempPeaks[i] += freqArray[i]; // 累積
+            }
+            frames++;
+        }, 50);
 
-    // --- 移動平均で音量平滑化 ---
-    volHistory.push(peakVol);
-    if (volHistory.length > VOL_HISTORY_LEN) volHistory.shift();
-    const smoothVol = volHistory.reduce((a, b) => a + b, 0) / volHistory.length;
+        setTimeout(() => {
+            clearInterval(learnInterval);
+            isLearning = false;
+            // 上位3つのピーク周波数インデックスを取得
+            let avgPeaks = tempPeaks.map(v => v / frames);
+            let peaksWithIndex = avgPeaks.map((val, idx) => ({val, idx})).sort((a, b) => b.val - a.val);
+            
+            // フィルタ: 低すぎる周波数帯域(ノイズ)や近接インデックスを除外するロジックを簡易実装
+            state.learnedPeaks = peaksWithIndex.slice(0, 5).map(p => p.idx);
+            document.getElementById('learningResult').textContent = `学習完了: 特徴周波数インデックス [${state.learnedPeaks.join(', ')}]`;
+            saveState();
+        }, 3000);
+    });
 
-    document.getElementById("peakFreq").textContent = Math.round(peakFreq);
-    document.getElementById("peakVol").textContent = smoothVol.toFixed(1);
+    // 検出処理
+    function detectLoop() {
+        if (!isAnalyzing) return;
+        requestAnimationFrame(detectLoop);
+        
+        if (isLearning || state.learnedPeaks.length === 0 || isRinging) return;
 
-    // --- キャリブレーション中ならピーク周波数を記録 ---
-    if (calibMode && smoothVol > 180) {
-        calibPeaks.push(peakFreq);
-        if (calibPeaks.length >= 8) { // 8回くらい鳴らしたら学習完了
-            calibMode = false;
-            learnBandsFromPeaks();
-        }
-    }
-
-    // --- 通常の打撃音検出 ---
-    if (!calibMode && calibrated) {
-        detectHit(peakFreq, smoothVol);
-    }
-
-    requestAnimationFrame(draw);
-}
-
-// キャリブレーション結果から3バンドを自動学習
-function learnBandsFromPeaks() {
-    // 1. ピーク周波数をソート
-    calibPeaks.sort((a, b) => a - b);
-
-    // 2. 全体のmin/max
-    const minF = calibPeaks[0];
-    const maxF = calibPeaks[calibPeaks.length - 1];
-    const range = maxF - minF;
-
-    // 3. 低・中・高を3分割
-    bandDefs.low.min  = minF;
-    bandDefs.low.max  = minF + range / 3;
-    bandDefs.mid.min  = minF + range / 3;
-    bandDefs.mid.max  = minF + 2 * range / 3;
-    bandDefs.high.min = minF + 2 * range / 3;
-    bandDefs.high.max = maxF;
-
-    calibrated = true;
-
-    document.getElementById("bandLow").textContent  =
-        `${Math.round(bandDefs.low.min)}〜${Math.round(bandDefs.low.max)} Hz`;
-    document.getElementById("bandMid").textContent  =
-        `${Math.round(bandDefs.mid.min)}〜${Math.round(bandDefs.mid.max)} Hz`;
-    document.getElementById("bandHigh").textContent =
-        `${Math.round(bandDefs.high.min)}〜${Math.round(bandDefs.high.max)} Hz`;
-
-    alert("キャリブレーション完了：3バンドを自動設定しました。");
-}
-
-// 3バンドを使った打撃音検出
-function detectHit(freq, vol) {
-    const now = audioCtx.currentTime;
-
-    // どのバンドに入っているか確認（今は使い道は表示のみだが、将来バンド別カウントも可能）
-    let band = null;
-    if (freq >= bandDefs.low.min && freq < bandDefs.low.max) band = "low";
-    else if (freq >= bandDefs.mid.min && freq < bandDefs.mid.max) band = "mid";
-    else if (freq >= bandDefs.high.min && freq <= bandDefs.high.max) band = "high";
-
-    // バンド外は無視（誤検出減らす）
-    if (!band) return;
-
-    // 打撃音の特徴：音量が一定以上
-    if (vol > 180) {
-        if (now - lastHitTime > 4.0) { // 4秒クールダウン
-            count++;
-            document.getElementById("count").textContent = count;
-            lastHitTime = now;
-
-            // スマホ振動
-            if (navigator.vibrate) {
-                navigator.vibrate(150);
+        analyser.getByteFrequencyData(freqArray);
+        
+        // 学習したピーク周波数帯域の強度が一定以上かチェック
+        let matchScore = 0;
+        let maxVal = 0;
+        for (let idx of state.learnedPeaks) {
+            if (freqArray[idx] > state.threshold) {
+                matchScore++;
+                if(freqArray[idx] > maxVal) maxVal = freqArray[idx];
             }
         }
+
+        // ピークの過半数が閾値を超えたら「鳴った」と判定
+        if (matchScore >= Math.ceil(state.learnedPeaks.length / 2)) {
+            triggerBellCount(maxVal);
+        }
     }
-}
+
+    function triggerBellCount(maxVal) {
+        isRinging = true;
+        state.count++;
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString() + '.' + now.getMilliseconds();
+        state.logs.push({ count: state.count, time: timeStr, maxVol: maxVal });
+        
+        updateLogUI();
+        saveState();
+
+        // 二重カウント防止のクールダウン (例: 5秒間は次のカウントをしない)
+        clearTimeout(cooldownTimer);
+        cooldownTimer = setTimeout(() => {
+            isRinging = false;
+        }, 5000);
+    }
+
+    // === UI更新・ファイル保存関連 ===
+    function updateLogUI() {
+        document.getElementById('bellCount').textContent = state.count;
+        const tbody = document.querySelector('#logTable tbody');
+        tbody.innerHTML = '';
+        state.logs.slice().reverse().forEach(log => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${log.count}</td><td>${log.time}</td><td>${log.maxVol}</td>`;
+            tbody.appendChild(tr);
+        });
+        if(state.learnedPeaks.length > 0) {
+            document.getElementById('learningResult').textContent = `プロファイルロード済み`;
+        }
+    }
+
+    document.getElementById('btnResetCount').addEventListener('click', () => {
+        if(confirm('カウントとログをリセットしますか？')) {
+            state.count = 0; state.logs = []; updateLogUI(); saveState();
+        }
+    });
+
+    document.getElementById('btnSaveImage').addEventListener('click', () => {
+        const link = document.createElement('a');
+        link.download = `bell_waveform_${Date.now()}.png`;
+        link.href = waveformCanvas.toDataURL();
+        link.click();
+        
+        setTimeout(() => {
+            const link2 = document.createElement('a');
+            link2.download = `bell_spectrum_${Date.now()}.png`;
+            link2.href = spectrumCanvas.toDataURL();
+            link2.click();
+        }, 100);
+    });
+
+    // プロファイルの保存・読込
+    document.getElementById('btnSaveProfile').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify({ learnedPeaks: state.learnedPeaks })], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'bell_profile.json';
+        a.click();
+    });
+
+    document.getElementById('fileLoadProfile').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (data.learnedPeaks) {
+                    state.learnedPeaks = data.learnedPeaks;
+                    saveState();
+                    updateLogUI();
+                    alert('学習データを読み込みました。');
+                }
+            } catch (err) { alert('ファイルの読み込みに失敗しました。'); }
+        };
+        reader.readAsText(file);
+    });
+
+    // === タイマーお知らせ機能 ===
+    let timerLoop;
+    let currentTimerCount = 0;
+    
+    // Web Audio API でビープ音を鳴らす
+    function playBeep(freq, duration) {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioContext.currentTime);
+        gain.gain.setValueAtTime(0.5, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+        osc.start(audioContext.currentTime);
+        osc.stop(audioContext.currentTime + duration);
+    }
+
+    document.getElementById('btnStartTimer').addEventListener('click', () => {
+        const startTimeInput = document.getElementById('timerStartTime').value;
+        if (!startTimeInput) return alert('開始時刻を指定してください。');
+        
+        const intervalSec = parseInt(document.getElementById('timerInterval').value);
+        const preNoticeSec = parseInt(document.getElementById('timerPreNotice').value);
+        const limit = parseInt(document.getElementById('timerLimit').value);
+        
+        document.getElementById('btnStartTimer').disabled = true;
+        document.getElementById('btnStopTimer').disabled = false;
+        document.getElementById('timerStatus').textContent = '動作中';
+        document.getElementById('timerStatus').classList.add('status-active');
+        
+        currentTimerCount = 0;
+        let isPreNotified = false;
+
+        timerLoop = setInterval(() => {
+            const now = new Date();
+            const [hours, minutes] = startTimeInput.split(':');
+            const targetStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
+            
+            // 過去の場合は翌日に設定
+            if (targetStart < now && currentTimerCount === 0) targetStart.setDate(targetStart.getDate() + 1);
+
+            // 基準となる次の打鐘時刻を計算
+            const targetTime = new Date(targetStart.getTime() + (currentTimerCount * intervalSec * 1000));
+            const diffSec = (targetTime.getTime() - now.getTime()) / 1000;
+
+            document.getElementById('timerMessage').textContent = `次の打鐘まで: ${Math.max(0, diffSec).toFixed(1)} 秒 (回数: ${currentTimerCount + 1}/${limit})`;
+
+            // 事前通知
+            if (diffSec <= preNoticeSec && diffSec > 0 && !isPreNotified) {
+                playBeep(880, 0.2); // 高めの短いビープ音
+                isPreNotified = true;
+            }
+
+            // 打鐘時刻到達
+            if (diffSec <= 0) {
+                playBeep(440, 1.0); // 低めの長いビープ音 (ここを実際の鐘の音声ファイルに差し替えることも可能です)
+                currentTimerCount++;
+                isPreNotified = false; // フラグをリセット
+
+                if (currentTimerCount >= limit) {
+                    document.getElementById('btnStopTimer').click();
+                    document.getElementById('timerMessage').textContent = 'タイマー完了';
+                }
+            }
+        }, 100); // 高頻度でチェック
+    });
+
+    document.getElementById('btnStopTimer').addEventListener('click', () => {
+        clearInterval(timerLoop);
+        document.getElementById('btnStartTimer').disabled = false;
+        document.getElementById('btnStopTimer').disabled = true;
+        document.getElementById('timerStatus').textContent = '待機中';
+        document.getElementById('timerStatus').classList.remove('status-active');
+        document.getElementById('timerMessage').textContent = '';
+    });
 </script>
 
 </body>
