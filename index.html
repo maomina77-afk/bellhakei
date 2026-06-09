@@ -174,34 +174,67 @@
         }
     }
 
-    // 学習処理
+   // === 学習処理 ===
     document.getElementById('btnLearnStart').addEventListener('click', () => {
         if (!isAnalyzing) return alert('先にマイク接続を開始してください。');
-        isLearning = true;
-        tempPeaks = new Array(analyser.frequencyBinCount).fill(0);
-        document.getElementById('learningResult').textContent = "鐘を鳴らしてください... 学習中...";
-        
-        let frames = 0;
-        const learnInterval = setInterval(() => {
-            analyser.getByteFrequencyData(freqArray);
-            for(let i = 0; i < freqArray.length; i++) {
-                tempPeaks[i] += freqArray[i]; // 累積
-            }
-            frames++;
-        }, 50);
+        if (isLearning) return; // 既に処理中なら何もしない
 
-        setTimeout(() => {
-            clearInterval(learnInterval);
-            isLearning = false;
-            // 上位3つのピーク周波数インデックスを取得
-            let avgPeaks = tempPeaks.map(v => v / frames);
-            let peaksWithIndex = avgPeaks.map((val, idx) => ({val, idx})).sort((a, b) => b.val - a.val);
+        const btn = document.getElementById('btnLearnStart');
+        const resultDiv = document.getElementById('learningResult');
+        
+        // 処理中はボタンを無効化
+        btn.disabled = true;
+        let countdown = 5;
+
+        // 1. カウントダウンフェーズ (5秒)
+        resultDiv.style.color = '#dcdcaa'; // 待機色 (黄色系)
+        resultDiv.textContent = `⏳ ${countdown}秒後に学習を開始します。準備してください...`;
+        
+        const countInterval = setInterval(() => {
+            countdown--;
+            if (countdown > 0) {
+                resultDiv.textContent = `⏳ ${countdown}秒後に学習を開始します。準備してください...`;
+            } else {
+                clearInterval(countInterval);
+                startRecording(); // カウントダウン終了後に録音開始
+            }
+        }, 1000);
+
+        // 2. 実際の録音・学習フェーズ (3秒)
+        function startRecording() {
+            isLearning = true;
+            tempPeaks = new Array(analyser.frequencyBinCount).fill(0);
             
-            // フィルタ: 低すぎる周波数帯域(ノイズ)や近接インデックスを除外するロジックを簡易実装
-            state.learnedPeaks = peaksWithIndex.slice(0, 5).map(p => p.idx);
-            document.getElementById('learningResult').textContent = `学習完了: 特徴周波数インデックス [${state.learnedPeaks.join(', ')}]`;
-            saveState();
-        }, 3000);
+            resultDiv.style.color = '#ff6b6b'; // 録音中の強調色 (赤系)
+            resultDiv.textContent = "🔴 鐘を鳴らしてください... 学習中 (3秒間)...";
+            
+            let frames = 0;
+            const learnInterval = setInterval(() => {
+                analyser.getByteFrequencyData(freqArray);
+                for(let i = 0; i < freqArray.length; i++) {
+                    tempPeaks[i] += freqArray[i]; // 累積
+                }
+                frames++;
+            }, 50);
+
+            // 3秒後に解析・完了処理
+            setTimeout(() => {
+                clearInterval(learnInterval);
+                isLearning = false;
+                btn.disabled = false; // ボタンを再度有効化
+                
+                // 上位5つのピーク周波数インデックスを取得
+                let avgPeaks = tempPeaks.map(v => v / frames);
+                let peaksWithIndex = avgPeaks.map((val, idx) => ({val, idx})).sort((a, b) => b.val - a.val);
+                
+                // フィルタ: 特徴的な周波数帯域を抽出
+                state.learnedPeaks = peaksWithIndex.slice(0, 5).map(p => p.idx);
+                
+                resultDiv.style.color = '#ce9178'; // 完了色 (オレンジ系)
+                resultDiv.textContent = `✅ 学習完了: 特徴周波数インデックス [${state.learnedPeaks.join(', ')}]`;
+                saveState();
+            }, 3000);
+        }
     });
 
     // 検出処理
