@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>釣り鐘アナライザー Pro</title>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+canvas { width: 100%; height: 150px; background: #000; margin-bottom: 10px; }
+#count { font-size: 32px; font-weight: bold; color: #d00; }
+.band-info { font-size: 12px; color: #555; }
+</style>
+</head>
+<body>
+
+<h2>釣り鐘アナライザー Pro</h2>
+
+<button id="startBtn">開始</button>
+<button id="stopBtn">停止</button>
+<button id="calibBtn">キャリブレーション開始</button>
+
+<h3>3バンド情報（自動学習）</h3>
+<div class="band-info">
+低域: <span id="bandLow">未学習</span><br>
+中域: <span id="bandMid">未学習</span><br>
+高域: <span id="bandHigh">未学習</span>
+</div>
+
+<h3>リアルタイム情報</h3>
+ピーク周波数: <span id="peakFreq">-</span> Hz<br>
+ピーク音量（平滑後）: <span id="peakVol">-</span><br>
+
+<h3>カウント</h3>
+回数: <span id="count">0</span>
+
+<h3>スペクトル（周波数領域）</h3>
+<canvas id="specCanvas"></canvas>
+
+<h3>波形（Time-domain）</h3>
+<canvas id="waveCanvas"></canvas>
+
+<script>
+let audioCtx, analyser, analyserTime, micStream;
+let freqData, timeData;
+let running = false;
+let lastHitTime = 0;
+let count = 0;
+
+// 3バンド用
+let bandDefs = {
+    low:  { min: 0,   max: 0 },
+    mid:  { min: 0,   max: 0 },
+    high: { min: 0,   max: 0 }
+};
+let calibrated = false;
+
+// キャリブレーション用
+let calibMode = false;
+let calibPeaks = [];
+
+// 移動平均用
+const volHistory = [];
+const VOL_HISTORY_LEN = 5;
+
+document.getElementById("startBtn").onclick = async () => {
+    if (running) return;
+    running = true;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 4096;
+
+    analyserTime = audioCtx.createAnalyser();
+    analyserTime.fftSize = 2048;
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = audioCtx.createMediaStreamSource(stream);
+
+    // ここではフィルタは使わず、3バンド判定をソフト側で行う
+    micStream.connect(analyser);
+    micStream.connect(analyserTime);
+
+    freqData = new Uint8Array(analyser.frequencyBinCount);
+    timeData = new Uint8Array(analyserTime.fftSize);
+
+    draw();
+};
+
+document.getElementById("stopBtn").onclick = () => {
+    running = false;
+    if (audioCtx) audioCtx.close();
+};
+
+document.getElementById("calibBtn").onclick = () => {
+    calibMode = true;
+    calibPeaks = [];
+    calibrated = false;
+    alert("キャリブレーション開始：実際に鐘を数回鳴らしてください。5〜10回程度。");
+};
+
+function draw() {
+    if (!running) return;
+
+    analyser.getByteFrequencyData(freqData);
+    analyserTime.getByteTimeDomainData(timeData);
+
+    const specCanvas = document.getElementById("specCanvas");
+    const specCtx = specCanvas.getContext("2d");
+    const sw = specCanvas.width;
+    const sh = specCanvas.height;
+
+    const waveCanvas = document.getElementById("waveCanvas");
+    const waveCtx = waveCanvas.getContext("2d");
+    const ww = waveCanvas.width;
+    const wh = waveCanvas.height;
+
+    specCtx.clearRect(0, 0, sw, sh);
+    waveCtx.clearRect(0, 0, ww, wh);
+
+    // --- スペクトル描画 & ピーク検出 ---
+    let peakFreq = 0;
+    let peakVol = 0;
+
+    specCtx.fillStyle = "cyan";
+
+    for (let i = 0; i < freqData.length; i++) {
+        const vol = freqData[i];
+        const freq = i * audioCtx.sampleRate / analyser.fftSize;
+
+        const x = (i / freqData.length) * sw;
+        const y = sh - (vol / 255) * sh;
+        specCtx.fillRect(x, y, 1, sh);
+
+        if (vol > peakVol) {
+            peakVol = vol;
+            peakFreq = freq;
+        }
+    }
+
+    // --- 波形描画（Time-domain） ---
+    waveCtx.strokeStyle = "lime";
+    waveCtx.beginPath();
+    for (let i = 0; i < timeData.length; i++) {
+        const v = timeData[i] / 255.0;
+        const x = (i / timeData.length) * ww;
+        const y = wh - v * wh;
+        if (i === 0) waveCtx.moveTo(x, y);
+        else waveCtx.lineTo(x, y);
+    }
+    waveCtx.stroke();
+
+    // --- 移動平均で音量平滑化 ---
+    volHistory.push(peakVol);
+    if (volHistory.length > VOL_HISTORY_LEN) volHistory.shift();
+    const smoothVol = volHistory.reduce((a, b) => a + b, 0) / volHistory.length;
+
+    document.getElementById("peakFreq").textContent = Math.round(peakFreq);
+    document.getElementById("peakVol").textContent = smoothVol.toFixed(1);
+
+    // --- キャリブレーション中ならピーク周波数を記録 ---
+    if (calibMode && smoothVol > 180) {
+        calibPeaks.push(peakFreq);
+        if (calibPeaks.length >= 8) { // 8回くらい鳴らしたら学習完了
+            calibMode = false;
+            learnBandsFromPeaks();
+        }
+    }
+
+    // --- 通常の打撃音検出 ---
+    if (!calibMode && calibrated) {
+        detectHit(peakFreq, smoothVol);
+    }
+
+    requestAnimationFrame(draw);
+}
+
+// キャリブレーション結果から3バンドを自動学習
+function learnBandsFromPeaks() {
+    // 1. ピーク周波数をソート
+    calibPeaks.sort((a, b) => a - b);
+
+    // 2. 全体のmin/max
+    const minF = calibPeaks[0];
+    const maxF = calibPeaks[calibPeaks.length - 1];
+    const range = maxF - minF;
+
+    // 3. 低・中・高を3分割
+    bandDefs.low.min  = minF;
+    bandDefs.low.max  = minF + range / 3;
+    bandDefs.mid.min  = minF + range / 3;
+    bandDefs.mid.max  = minF + 2 * range / 3;
+    bandDefs.high.min = minF + 2 * range / 3;
+    bandDefs.high.max = maxF;
+
+    calibrated = true;
+
+    document.getElementById("bandLow").textContent  =
+        `${Math.round(bandDefs.low.min)}〜${Math.round(bandDefs.low.max)} Hz`;
+    document.getElementById("bandMid").textContent  =
+        `${Math.round(bandDefs.mid.min)}〜${Math.round(bandDefs.mid.max)} Hz`;
+    document.getElementById("bandHigh").textContent =
+        `${Math.round(bandDefs.high.min)}〜${Math.round(bandDefs.high.max)} Hz`;
+
+    alert("キャリブレーション完了：3バンドを自動設定しました。");
+}
+
+// 3バンドを使った打撃音検出
+function detectHit(freq, vol) {
+    const now = audioCtx.currentTime;
+
+    // どのバンドに入っているか確認（今は使い道は表示のみだが、将来バンド別カウントも可能）
+    let band = null;
+    if (freq >= bandDefs.low.min && freq < bandDefs.low.max) band = "low";
+    else if (freq >= bandDefs.mid.min && freq < bandDefs.mid.max) band = "mid";
+    else if (freq >= bandDefs.high.min && freq <= bandDefs.high.max) band = "high";
+
+    // バンド外は無視（誤検出減らす）
+    if (!band) return;
+
+    // 打撃音の特徴：音量が一定以上
+    if (vol > 180) {
+        if (now - lastHitTime > 4.0) { // 4秒クールダウン
+            count++;
+            document.getElementById("count").textContent = count;
+            lastHitTime = now;
+
+            // スマホ振動
+            if (navigator.vibrate) {
+                navigator.vibrate(150);
+            }
+        }
+    }
+}
+</script>
+
+</body>
+</html>
