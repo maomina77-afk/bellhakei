@@ -66,8 +66,8 @@
         <h2>鐘つき間隔お知らせタイマー</h2>
         <div>
             <label>開始時刻: <input type="time" id="timerStartTime" required></label><br><br>
-            <label>打鐘間隔 (秒): <input type="number" id="timerInterval" value="60" min="1"></label><br><br>
-            <label>事前通知 (秒前): <input type="number" id="timerPreNotice" value="10" min="0"></label><br><br>
+            <label>打鐘間隔 (秒): <input type="number" id="timerInterval" value="45" min="1"></label><br><br>
+            <label>事前通知 (秒前): <input type="number" id="timerPreNotice" value="5" min="0"></label><br><br>
             <label>通知回数上限: <input type="number" id="timerLimit" value="108" min="1"></label>
         </div>
         <div style="margin-top: 15px;">
@@ -272,11 +272,11 @@
         updateLogUI();
         saveState();
 
-        // 二重カウント防止のクールダウン (例: 5秒間は次のカウントをしない)
+        // 二重カウント防止のクールダウン (例: 28秒間は次のカウントをしない)
         clearTimeout(cooldownTimer);
         cooldownTimer = setTimeout(() => {
             isRinging = false;
-        }, 5000);
+        }, 28000);
     }
 
     // === UI更新・ファイル保存関連 ===
@@ -382,8 +382,8 @@
             const [hours, minutes] = startTimeInput.split(':');
             const targetStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
             
-            // 過去の場合は翌日に設定
-            if (targetStart < now && currentTimerCount === 0) targetStart.setDate(targetStart.getDate() + 1);
+            // 過去の場合は翌日に設定(削除）
+            // if (targetStart < now && currentTimerCount === 0) targetStart.setDate(targetStart.getDate() + 1);
 
             // 基準となる次の打鐘時刻を計算
             const targetTime = new Date(targetStart.getTime() + (currentTimerCount * intervalSec * 1000));
