@@ -5,46 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>釣り鐘解析・自動カウントシステム</title>
     <style>
-        /* スマホ向け基本設定 */
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e1e; color: #d4d4d4; margin: 0; padding: 0; }
         * { box-sizing: border-box; }
         h2, h3 { color: #569cd6; margin: 10px 0 5px 0; }
         
-        /* ヘッダー・時計 */
         .header { display: flex; justify-content: space-between; align-items: center; background-color: #252526; padding: 10px; border-bottom: 1px solid #3e3e42; position: sticky; top: 0; z-index: 100; }
         .clock { font-size: 1.5em; color: #4fc1ff; font-family: monospace; font-weight: bold; }
         
-        /* ツールバー */
         .toolbar { display: flex; gap: 5px; padding: 10px; background: #2d2d2d; flex-wrap: wrap; }
         button { flex: 1; min-width: 120px; background-color: #0e639c; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 1em; font-weight: bold; cursor: pointer; touch-action: manipulation; }
         button:active { background-color: #1177bb; }
         button:disabled { background-color: #555; cursor: not-allowed; color: #888; }
         .btn-setting { background-color: #512da8; }
         
-        /* メインコンテンツ配置 */
         .container { padding: 10px; display: flex; flex-direction: column; gap: 15px; }
         .panel { background-color: #2d2d2d; border: 1px solid #3e3e42; border-radius: 8px; padding: 12px; }
         
-        /* キャンバス（波形・スペクトル） */
         canvas { background-color: #000; border: 1px solid #555; width: 100%; height: 100px; border-radius: 4px; display: block; margin-bottom: 5px; }
         
-        /* カウントとタイマー表示 */
         .count-display { font-size: 4em; font-weight: bold; color: #4fc1ff; text-align: center; line-height: 1; margin: 10px 0; }
         .timer-msg { font-size: 1.2em; color: #dcdcaa; font-weight: bold; text-align: center; min-height: 1.5em; }
         
-        /* ログテーブル */
         table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
         th, td { border: 1px solid #555; padding: 8px 5px; text-align: center; }
         th { background-color: #333; }
         .log-wrap { max-height: 150px; overflow-y: auto; }
         
-        /* バッジ */
         .status-badge { display: inline-block; padding: 5px 10px; border-radius: 12px; background-color: #555; font-size: 0.8em; font-weight: bold; margin-bottom: 5px; }
         .status-active { background-color: #28a745; color: white; }
         .status-recording { background-color: #dc3545; color: white; animation: blink 1s infinite; }
         @keyframes blink { 50% { opacity: 0.5; } }
 
-        /* モーダルダイアログ（設定画面） */
         dialog { background-color: #1e1e1e; color: #d4d4d4; border: 2px solid #007acc; border-radius: 10px; width: 95%; max-width: 400px; padding: 15px; margin: auto; }
         dialog::backdrop { background: rgba(0, 0, 0, 0.7); }
         .setting-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 0.9em; }
@@ -64,7 +55,6 @@
 </div>
 
 <div class="container">
-    
     <div class="panel">
         <div style="display: flex; justify-content: space-between;">
             <span id="audioStatus" class="status-badge">監視: 停止中</span>
@@ -143,21 +133,16 @@
     <button id="btnCloseSettings" style="width: 100%; background-color: #555;">閉じる</button>
 </dialog>
 
+<!-- 録画用の隠しキャンバス -->
 <canvas id="recordCanvas" width="600" height="400" style="display: none;"></canvas>
 
 <script>
-    // スマホブラウザの制限対策: AudioContextはユーザー操作時に初期化・再開する
     let audioContext;
     function initAudioContext() {
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioContext.state === 'suspended') {
-            audioContext.resume();
-        }
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') audioContext.resume();
     }
 
-    // === 時計更新 ===
     setInterval(() => {
         const now = new Date();
         document.getElementById('clockDisplay').textContent = 
@@ -166,37 +151,34 @@
             String(now.getSeconds()).padStart(2, '0');
     }, 1000);
 
-    // === 設定モーダル制御 ===
     const dialog = document.getElementById('settingsDialog');
     document.getElementById('btnOpenSettings').addEventListener('click', () => dialog.showModal());
     document.getElementById('btnCloseSettings').addEventListener('click', () => dialog.close());
 
-    // === 状態変数と永続化 ===
-    let state = { count: 0, logs: [], learnedPeaks: [], threshold: 130 }; // スマホマイクは感度が低いことがあるため閾値を少し下げました
-    const savedState = localStorage.getItem('bellhakei_state_v3');
+    let state = { count: 0, logs: [], learnedPeaks: [], threshold: 130 };
+    const savedState = localStorage.getItem('bellhakei_state_v4');
     if (savedState) { state = JSON.parse(savedState); updateLogUI(); }
-    function saveState() { localStorage.setItem('bellhakei_state_v3', JSON.stringify(state)); }
+    function saveState() { localStorage.setItem('bellhakei_state_v4', JSON.stringify(state)); }
 
-    // === オーディオ解析＆録画 関連 ===
     let analyser, microphone, dataArray, freqArray;
     let isAnalyzing = false, isLearning = false, isRinging = false;
     let cooldownTimer = null, tempPeaks = [];
     
-    // キャンバス・録画関連
     const wCanvas = document.getElementById('waveformCanvas');
     const sCanvas = document.getElementById('spectrumCanvas');
     const rCanvas = document.getElementById('recordCanvas');
     const ctxW = wCanvas.getContext('2d');
     const ctxS = sCanvas.getContext('2d');
-    const ctxR = rCanvas.getContext('2d'); // 録画用合成キャンバス
+    const ctxR = rCanvas.getContext('2d');
     
+    // 録画関連の変数 (改良版)
+    let globalAudioStream = null;
     let mediaRecorder;
     let recordedChunks = [];
     let isRecordingTriggered = false;
-    let postRecordSec = 0;
-    let highlightFrames = 0; // オーバーレイ表示用
+    let resetTimer = null;
+    let highlightFrames = 0;
 
-    // キャンバスのサイズを画面幅に合わせる関数
     function resizeCanvas() {
         wCanvas.width = wCanvas.clientWidth;
         sCanvas.width = sCanvas.clientWidth;
@@ -209,6 +191,7 @@
         if (isAnalyzing) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            globalAudioStream = stream;
             
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 2048;
@@ -218,7 +201,7 @@
             dataArray = new Uint8Array(analyser.frequencyBinCount);
             freqArray = new Uint8Array(analyser.frequencyBinCount);
             
-            setupCanvasRecording(stream);
+            startCanvasRecording(stream);
 
             isAnalyzing = true;
             document.getElementById('audioStatus').textContent = '監視: 実行中';
@@ -236,330 +219,15 @@
         }
     });
 
-    // 画面(キャンバス)とマイク音声を合成して録画する準備
-    function setupCanvasRecording(audioStream) {
-        // キャンバスから映像ストリームを取得 (30fps)
+    // ドライブレコーダー方式の録画関数
+    function startCanvasRecording(audioStream) {
         const canvasStream = rCanvas.captureStream(30);
-        // マイクの音声トラックを映像ストリームに追加
         const audioTracks = audioStream.getAudioTracks();
         if (audioTracks.length > 0) {
             canvasStream.addTrack(audioTracks[0]);
         }
 
-        let mime = 'video/webm';
-        if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/mp4';
-
-        mediaRecorder = new MediaRecorder(canvasStream, { mimeType: mime });
+        mediaRecorder = new MediaRecorder(canvasStream, { mimeType: 'video/webm' });
+        recordedChunks = [];
         
-        mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0) recordedChunks.push(e.data);
-
-            if (isRecordingTriggered) {
-                // 検知後：カウントダウン
-                postRecordSec--;
-                const statEl = document.getElementById('recordingStatus');
-                statEl.textContent = `🔴 動画保存中... 残り ${postRecordSec} 秒`;
-                
-                if (postRecordSec <= 0) {
-                    saveVideoBlob();
-                    isRecordingTriggered = false;
-                    recordedChunks = []; // 保存したらバッファクリア
-                    statEl.style.display = 'none';
-                }
-            } else {
-                // 検知前：常に直近10秒(10チャンク)だけ保持するリングバッファ
-                if (recordedChunks.length > 10) recordedChunks.shift();
-            }
-        };
-        // 1秒ごとにチャンクを生成する
-        mediaRecorder.start(1000);
-    }
-
-    function saveVideoBlob() {
-        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const ds = new Date().toISOString().replace(/T/, '_').replace(/:/g, '').split('.')[0];
-        a.download = `bell_canvas_${ds}.webm`; // 拡張子はwebm
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }
-
-    // 描画ループ (画面用 ＋ 録画合成用)
-    function draw() {
-        if (!isAnalyzing) return;
-        requestAnimationFrame(draw);
-        
-        const wW = wCanvas.width, wH = wCanvas.height;
-        const sW = sCanvas.width, sH = sCanvas.height;
-
-        // 1. 波形の取得と描画
-        analyser.getByteTimeDomainData(dataArray);
-        ctxW.fillStyle = '#000'; ctxW.fillRect(0, 0, wW, wH);
-        ctxW.lineWidth = 2; ctxW.strokeStyle = '#4fc1ff'; ctxW.beginPath();
-        const sliceWidth = wW * 1.0 / analyser.frequencyBinCount;
-        let x = 0;
-        for(let i = 0; i < analyser.frequencyBinCount; i++) {
-            const y = (dataArray[i] / 128.0) * wH / 2;
-            if(i === 0) ctxW.moveTo(x, y); else ctxW.lineTo(x, y);
-            x += sliceWidth;
-        }
-        ctxW.lineTo(wW, wH / 2); ctxW.stroke();
-
-        // 2. スペクトルの取得と描画
-        analyser.getByteFrequencyData(freqArray);
-        ctxS.fillStyle = '#000'; ctxS.fillRect(0, 0, sW, sH);
-        const barWidth = (sW / analyser.frequencyBinCount) * 2.5;
-        x = 0;
-        for(let i = 0; i < analyser.frequencyBinCount; i++) {
-            const barHeight = freqArray[i] * (sH / 255);
-            ctxS.fillStyle = `rgb(${freqArray[i] + 100}, 50, 50)`;
-            ctxS.fillRect(x, sH - barHeight, barWidth, barHeight);
-            x += barWidth + 1;
-        }
-
-        // 3. オーバーレイ表示 (検知時に画面を光らせる)
-        if (highlightFrames > 0) {
-            // 波形を赤く
-            ctxW.fillStyle = 'rgba(255, 50, 50, 0.4)';
-            ctxW.fillRect(0, 0, wW, wH);
-            
-            // スペクトルの学習ピーク位置に黄色い線を引く
-            if (state.learnedPeaks.length > 0) {
-                ctxS.fillStyle = 'rgba(255, 255, 0, 0.8)';
-                state.learnedPeaks.forEach(idx => {
-                    const px = idx * (barWidth + 1);
-                    ctxS.fillRect(px, 0, Math.max(barWidth, 3), sH);
-                });
-            }
-            highlightFrames--;
-        }
-
-        // 4. 録画用隠しキャンバスへの合成描画
-        ctxR.fillStyle = '#000';
-        ctxR.fillRect(0, 0, 600, 400);
-        // 上半分に波形、下半分にスペクトルをコピー
-        ctxR.drawImage(wCanvas, 0, 0, 600, 200);
-        ctxR.drawImage(sCanvas, 0, 200, 600, 200);
-        // 録画にもオーバーレイを反映させるため、テキストを描画
-        if (highlightFrames > 0) {
-            ctxR.fillStyle = 'yellow';
-            ctxR.font = '30px Arial';
-            ctxR.fillText('BELL DETECTED!', 20, 40);
-        }
-    }
-
-    // === 学習・検知ロジック ===
-    document.getElementById('btnLearnStart').addEventListener('click', () => {
-        if (!isAnalyzing) { alert('先にマイク接続を行ってください。'); return; }
-        if (isLearning) return;
-        
-        isLearning = true;
-        const btn = document.getElementById('btnLearnStart');
-        const res = document.getElementById('learningResult');
-        btn.disabled = true;
-        
-        res.textContent = "🔴 鐘を鳴らしてください... 3秒間録音中";
-        res.style.color = "#ff6b6b";
-        tempPeaks = new Array(analyser.frequencyBinCount).fill(0);
-        
-        let frames = 0;
-        const learnInt = setInterval(() => {
-            analyser.getByteFrequencyData(freqArray);
-            for(let i=0; i<freqArray.length; i++) tempPeaks[i] += freqArray[i];
-            frames++;
-        }, 50);
-
-        setTimeout(() => {
-            clearInterval(learnInt);
-            isLearning = false; btn.disabled = false;
-            let avgPeaks = tempPeaks.map(v => v / frames);
-            let peaksWithIndex = avgPeaks.map((val, idx) => ({val, idx})).sort((a, b) => b.val - a.val);
-            state.learnedPeaks = peaksWithIndex.slice(0, 5).map(p => p.idx);
-            res.textContent = `✅ 学習完了: 特徴 [${state.learnedPeaks.join(',')}]`;
-            res.style.color = "#ce9178";
-            saveState();
-            updateLogUI();
-        }, 3000);
-    });
-
-    function detectLoop() {
-        if (!isAnalyzing) return;
-        requestAnimationFrame(detectLoop);
-        if (isLearning || state.learnedPeaks.length === 0 || isRinging) return;
-
-        analyser.getByteFrequencyData(freqArray);
-        let matchScore = 0, maxVal = 0;
-        
-        for (let idx of state.learnedPeaks) {
-            if (freqArray[idx] > state.threshold) {
-                matchScore++;
-                if(freqArray[idx] > maxVal) maxVal = freqArray[idx];
-            }
-        }
-        if (matchScore >= Math.ceil(state.learnedPeaks.length / 2)) {
-            triggerBellCount(maxVal);
-        }
-    }
-
-    function triggerBellCount(maxVal) {
-        isRinging = true;
-        state.count++;
-        const now = new Date();
-        const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
-        state.logs.push({ count: state.count, time: timeStr, maxVol: maxVal });
-        
-        highlightFrames = 60; // 約1秒間キャンバスを光らせる
-
-        // 録画トリガー: 過去10秒は保持されているので、ここから10秒間追加録画して保存へ
-        if (!isRecordingTriggered && mediaRecorder && mediaRecorder.state === 'recording') {
-            isRecordingTriggered = true;
-            postRecordSec = 10;
-            const statEl = document.getElementById('recordingStatus');
-            statEl.style.display = 'inline-block';
-        }
-        
-        updateLogUI(); saveState();
-        clearTimeout(cooldownTimer);
-        cooldownTimer = setTimeout(() => { isRinging = false; }, 28000);
-    }
-
-    // === UI更新・ファイル操作 ===
-    function updateLogUI() {
-        document.getElementById('bellCount').textContent = state.count;
-        const tbody = document.querySelector('#logTable tbody');
-        tbody.innerHTML = '';
-        state.logs.slice().reverse().forEach(log => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${log.count}</td><td>${log.time}</td><td>${log.maxVol}</td>`;
-            tbody.appendChild(tr);
-        });
-        if(state.learnedPeaks.length > 0) {
-            document.getElementById('learningResult').textContent = `✅ プロファイルロード済み`;
-        }
-    }
-
-    document.getElementById('btnResetCount').addEventListener('click', () => {
-        if(confirm('カウントとログをリセットしますか？')) {
-            state.count = 0; state.logs = []; updateLogUI(); saveState();
-        }
-    });
-
-    document.getElementById('btnSaveProfile').addEventListener('click', () => {
-        if(state.learnedPeaks.length === 0) return alert('学習データがありません');
-        const blob = new Blob([JSON.stringify({ learnedPeaks: state.learnedPeaks })], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'bell_profile.json';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    });
-
-    document.getElementById('fileLoadProfile').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (data.learnedPeaks) {
-                    state.learnedPeaks = data.learnedPeaks; saveState(); updateLogUI();
-                    alert('読み込み成功');
-                }
-            } catch (err) { alert('読み込み失敗'); }
-        };
-        reader.readAsText(file);
-    });
-
-    // === タイマーお知らせ機能 (スマホスピーカー向けに改良) ===
-    let timerLoop;
-    let currentTimerCount = 0;
-    
-    // スマホのスピーカーでも聞こえやすいように、周波数を高くし、ノコギリ波(sawtooth)で倍音を増やす
-    function playLoudBeep(freq, duration) {
-        initAudioContext(); // 確実に鳴らすため
-        const osc1 = audioContext.createOscillator();
-        const osc2 = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        
-        osc1.connect(gain); osc2.connect(gain); gain.connect(audioContext.destination);
-        
-        osc1.type = 'sawtooth'; osc2.type = 'square';
-        osc1.frequency.setValueAtTime(freq, audioContext.currentTime);
-        osc2.frequency.setValueAtTime(freq * 1.02, audioContext.currentTime); // デチューンで音を太く
-        
-        gain.gain.setValueAtTime(1.0, audioContext.currentTime); // 最大音量
-        gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
-        
-        osc1.start(audioContext.currentTime); osc2.start(audioContext.currentTime);
-        osc1.stop(audioContext.currentTime + duration); osc2.stop(audioContext.currentTime + duration);
-    }
-
-    document.getElementById('btnStartTimer').addEventListener('click', () => {
-        initAudioContext();
-        const startTimeInput = document.getElementById('timerStartTime').value;
-        const intervalSec = parseInt(document.getElementById('timerInterval').value);
-        const preNoticeSec = parseInt(document.getElementById('timerPreNotice').value);
-        const limit = parseInt(document.getElementById('timerLimit').value);
-        const msgEl = document.getElementById('timerMessage');
-        
-        let targetStart;
-        const now = new Date();
-        
-        // 時刻が未記入の場合は「現在時刻の10秒後」
-        if (!startTimeInput) {
-            targetStart = new Date(now.getTime() + 10000); 
-            document.getElementById('timerStartTime').value = 
-                String(targetStart.getHours()).padStart(2, '0') + ':' + 
-                String(targetStart.getMinutes()).padStart(2, '0');
-        } else {
-            const [hours, minutes] = startTimeInput.split(':');
-            targetStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0);
-            if (targetStart < now) targetStart.setDate(targetStart.getDate() + 1);
-        }
-        
-        document.getElementById('btnStartTimer').disabled = true;
-        document.getElementById('btnStopTimer').disabled = false;
-        
-        currentTimerCount = 0;
-        let isPreNotified = false;
-
-        timerLoop = setInterval(() => {
-            const currentNow = new Date();
-            const targetTime = new Date(targetStart.getTime() + (currentTimerCount * intervalSec * 1000));
-            const diffSec = (targetTime.getTime() - currentNow.getTime()) / 1000;
-
-            msgEl.textContent = `次まで: ${Math.max(0, diffSec).toFixed(1)} 秒 (${currentTimerCount + 1}/${limit})`;
-
-            // 事前通知 (かなり高いピピピッという音)
-            if (diffSec <= preNoticeSec && diffSec > 0 && !isPreNotified) {
-                playLoudBeep(1500, 0.2); 
-                isPreNotified = true;
-            }
-
-            // 打鐘時刻到達 (スマホでも響く中音域のビィーーーという音)
-            if (diffSec <= 0) {
-                playLoudBeep(880, 1.2); 
-                currentTimerCount++;
-                isPreNotified = false; 
-
-                if (currentTimerCount >= limit) {
-                    document.getElementById('btnStopTimer').click();
-                    msgEl.textContent = 'タイマー完了';
-                }
-            }
-        }, 100); 
-    });
-
-    document.getElementById('btnStopTimer').addEventListener('click', () => {
-        clearInterval(timerLoop);
-        document.getElementById('btnStartTimer').disabled = false;
-        document.getElementById('btnStopTimer').disabled = true;
-        document.getElementById('timerMessage').textContent = '待機中';
-    });
-</script>
-
-</body>
-</html>
+        mediaRecorder.ondataavailable = (Normally I can help with things like this, but I don't seem to have access to that content. You can try again or ask me for something else.
